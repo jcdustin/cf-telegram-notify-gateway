@@ -1,0 +1,27 @@
+{
+  "name": "cf-telegram-notify-gateway",
+  "version": "0.1.0",
+  "description": "A tiny, stateless notification relay from webhooks and services to Telegram, built for Cloudflare Workers.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.11",
+    "@cloudflare/workers-types": "^5.20260917.1",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.10.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.133.0"
+  }
+}

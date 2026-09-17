@@ -1,0 +1,5 @@
+TELEGRAM_BOT_TOKEN="replace-with-your-telegram-bot-token"
+TELEGRAM_CHAT_ID="-1001234567890"
+GATEWAY_SECRET="replace-with-a-long-random-secret"
+# Optional: only for Telegram forum topics
+# TELEGRAM_MESSAGE_THREAD_ID="123"

@@ -18,6 +18,7 @@
 - 不需要数据库、KV、D1、Durable Objects、队列、定时任务、Docker 或前端
 - 零运行时 npm 依赖
 - Bearer Token 认证，并使用恒定时间比较
+- 原生兼容 MonitorFlare 的 `monitor.down` 和 `monitor.up` Webhook
 - 纯文本原样转发，不自动添加格式
 - JSON 模式只接受少量安全的展示参数
 - Telegram 目标只能通过 Worker Secret 配置
@@ -135,6 +136,18 @@ HTTP 500
 未知字段以及 `chat_id`、`bot_token`、`token` 等目标覆盖字段会被拒绝。网关不是通用 Telegram API 代理。
 
 默认情况下，网关不会格式化消息。上游发送什么文本，Telegram 就收到什么文本。
+
+### MonitorFlare Webhook
+
+网关可直接接收 MonitorFlare 通用 Webhook 的原生 JSON，无需修改 MonitorFlare。它会验证 `event`、`monitor`、`status`、`detail` 和 `timestamp` 字段，并将 `monitor.down` / `monitor.up` 事件转换为易读的 Telegram 纯文本通知。
+
+在 MonitorFlare 的通用 Webhook 渠道中配置：
+
+- Webhook 地址：`https://gateway.almostsafe.com/v1/notify`
+- 请求方法：`POST`
+- 请求头：`{"Authorization":"Bearer YOUR_GATEWAY_SECRET"}`
+
+适配器不接受 Bot Token、Chat ID 或其他 Telegram 目标覆盖字段。
 
 ### curl 示例
 
@@ -265,7 +278,7 @@ npm test
 
 - 可选消息拆分
 - 可选的 KV 幂等机制
-- GitHub、Cloudflare、MonitorFlare 等服务适配器
+- GitHub、Cloudflare 等更多服务适配器
 - Apprise 或 ntfy 兼容输入
 - 按来源配置 HMAC 签名和独立密钥
 - 多目标支持

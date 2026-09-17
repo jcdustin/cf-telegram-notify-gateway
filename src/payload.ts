@@ -65,6 +65,54 @@ function validateText(text: unknown): string {
   return text;
 }
 
+function requireString(input: Record<string, unknown>, field: string, allowEmpty = false): string {
+  const value = input[field];
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
+    throw new PayloadError("invalid_payload", 400, `Field '${field}' must be ${allowEmpty ? "a string" : "a non-empty string"}.`);
+  }
+  return value;
+}
+
+function parseMonitorFlare(input: Record<string, unknown>): NotifyMessage {
+  const allowed = new Set(["event", "monitor", "status", "detail", "timestamp"]);
+  for (const key of Object.keys(input)) {
+    if (!allowed.has(key)) {
+      throw new PayloadError("unsupported_field", 400, `Field '${key}' is not supported.`);
+    }
+  }
+
+  const event = requireString(input, "event");
+  if (event !== "monitor.down" && event !== "monitor.up") {
+    throw new PayloadError("invalid_payload", 400, "Field 'event' must be monitor.down or monitor.up.");
+  }
+
+  const monitorValue = input.monitor;
+  if (typeof monitorValue !== "object" || monitorValue === null || Array.isArray(monitorValue)) {
+    throw new PayloadError("invalid_payload", 400, "Field 'monitor' must be an object.");
+  }
+  const monitor = monitorValue as Record<string, unknown>;
+  if (Object.keys(monitor).some((key) => key !== "name" && key !== "url")) {
+    throw new PayloadError("unsupported_field", 400, "Monitor contains an unsupported field.");
+  }
+
+  const name = requireString(monitor, "name");
+  const url = requireString(monitor, "url");
+  const status = requireString(input, "status");
+  const detail = requireString(input, "detail", true);
+  const timestamp = requireString(input, "timestamp");
+  const icon = event === "monitor.down" ? "🔴" : "🟢";
+  const title = event === "monitor.down" ? "MonitorFlare 告警" : "MonitorFlare 恢复";
+  const lines = [
+    `${icon} ${title}`,
+    `名称：${name}`,
+    `地址：${url}`,
+    `状态：${status}`,
+  ];
+  if (detail.length > 0) lines.push(`详情：${detail}`);
+  lines.push(`时间：${timestamp}`);
+  return { text: validateText(lines.join("\n")) };
+}
+
 function parseJson(raw: string): NotifyMessage {
   let value: unknown;
   try {
@@ -77,12 +125,19 @@ function parseJson(raw: string): NotifyMessage {
   }
 
   const input = value as Record<string, unknown>;
-  const allowed = new Set(["text", "parse_mode", "disable_notification", "protect_content"]);
   const dangerous = new Set(["chat_id", "bot_token", "token"]);
   for (const key of Object.keys(input)) {
     if (dangerous.has(key)) {
       throw new PayloadError("destination_override", 400, `Field '${key}' is not allowed.`);
     }
+  }
+
+  if (!("text" in input) && "event" in input) {
+    return parseMonitorFlare(input);
+  }
+
+  const allowed = new Set(["text", "parse_mode", "disable_notification", "protect_content"]);
+  for (const key of Object.keys(input)) {
     if (!allowed.has(key)) {
       throw new PayloadError("unsupported_field", 400, `Field '${key}' is not supported.`);
     }

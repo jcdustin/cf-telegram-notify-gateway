@@ -18,6 +18,7 @@ This project does one thing: accept an authenticated HTTP request and call Teleg
 - No database, KV, D1, Durable Objects, queues, cron, Docker, or frontend
 - Zero runtime npm dependencies
 - Bearer-token authentication with constant-time comparison
+- Native MonitorFlare `monitor.down` and `monitor.up` webhook support
 - Plain-text pass-through with no automatic formatting
 - A small allowlist of safe JSON presentation options
 - One secret-configured Telegram destination
@@ -129,6 +130,18 @@ HTTP 500
 `text` is required. The only optional fields are `parse_mode` (`HTML` or `MarkdownV2`), `disable_notification`, and `protect_content`. Unknown fields and destination-like fields such as `chat_id`, `bot_token`, and `token` are rejected.
 
 The gateway does not format your notification by default. Whatever text the upstream service sends is what Telegram receives.
+
+### MonitorFlare webhook
+
+The gateway directly accepts MonitorFlare's native generic-webhook JSON; no MonitorFlare changes are required. It validates the `event`, `monitor`, `status`, `detail`, and `timestamp` fields and converts `monitor.down` / `monitor.up` events into readable plain-text Telegram notifications.
+
+Configure a generic Webhook channel in MonitorFlare with:
+
+- Webhook URL: `https://gateway.almostsafe.com/v1/notify`
+- Method: `POST`
+- Headers: `{"Authorization":"Bearer YOUR_GATEWAY_SECRET"}`
+
+The adapter does not accept bot tokens, chat IDs, or other Telegram destination overrides.
 
 ### curl examples
 

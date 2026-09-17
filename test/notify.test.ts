@@ -219,6 +219,58 @@ describe("JSON notifications", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: "unsupported_field" });
   });
+
+  it.each([
+    [
+      "monitor.down",
+      "🔴 MonitorFlare 告警\n名称：SubsTracker\n地址：https://tracker.example/health\n状态：故障\n详情：HTTP 503\n时间：2026-09-17 15:00:00",
+    ],
+    [
+      "monitor.up",
+      "🟢 MonitorFlare 恢复\n名称：SubsTracker\n地址：https://tracker.example/health\n状态：正常\n详情：HTTP 200\n时间：2026-09-17 15:05:00",
+    ],
+  ])("adapts a MonitorFlare %s webhook", async (event, expectedText) => {
+    const isDown = event === "monitor.down";
+    const response = await dispatch(
+      request("/v1/notify", {
+        method: "POST",
+        contentType: "application/json",
+        token: "test-secret",
+        body: JSON.stringify({
+          event,
+          monitor: { name: "SubsTracker", url: "https://tracker.example/health" },
+          status: isDown ? "故障" : "正常",
+          detail: isDown ? "HTTP 503" : "HTTP 200",
+          timestamp: isDown ? "2026-09-17 15:00:00" : "2026-09-17 15:05:00",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(sentPayload()).toMatchObject({ chat_id: env.TELEGRAM_CHAT_ID, text: expectedText });
+    expect(sentPayload()).not.toHaveProperty("parse_mode");
+  });
+
+  it("rejects malformed MonitorFlare webhook data", async () => {
+    const response = await dispatch(
+      request("/v1/notify", {
+        method: "POST",
+        contentType: "application/json",
+        token: "test-secret",
+        body: JSON.stringify({
+          event: "monitor.unknown",
+          monitor: { name: "SubsTracker", url: "https://tracker.example/health" },
+          status: "unknown",
+          detail: "",
+          timestamp: "now",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_payload" });
+    expect(telegramFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe("request validation and Telegram failures", () => {

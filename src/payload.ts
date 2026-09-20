@@ -82,8 +82,8 @@ function parseMonitorFlare(input: Record<string, unknown>): NotifyMessage {
   }
 
   const event = requireString(input, "event");
-  if (event !== "monitor.down" && event !== "monitor.up") {
-    throw new PayloadError("invalid_payload", 400, "Field 'event' must be monitor.down or monitor.up.");
+  if (event !== "monitor.down" && event !== "monitor.warning" && event !== "monitor.up") {
+    throw new PayloadError("invalid_payload", 400, "Field 'event' must be monitor.down, monitor.warning, or monitor.up.");
   }
 
   const monitorValue = input.monitor;
@@ -100,10 +100,13 @@ function parseMonitorFlare(input: Record<string, unknown>): NotifyMessage {
   const status = requireString(input, "status");
   const detail = requireString(input, "detail", true);
   const timestamp = requireString(input, "timestamp");
-  const icon = event === "monitor.down" ? "🔴" : "🟢";
-  const title = event === "monitor.down" ? "MonitorFlare 告警" : "MonitorFlare 恢复";
+  const presentation = event === "monitor.down"
+    ? { icon: "🔴", title: "MonitorFlare 宕机告警" }
+    : event === "monitor.warning"
+      ? { icon: "🟡", title: "MonitorFlare 预警" }
+      : { icon: "🟢", title: "MonitorFlare 恢复" };
   const lines = [
-    `${icon} ${title}`,
+    `${presentation.icon} ${presentation.title}`,
     `名称：${name}`,
     `地址：${url}`,
     `状态：${status}`,

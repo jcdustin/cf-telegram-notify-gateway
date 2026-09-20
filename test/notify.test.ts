@@ -223,7 +223,11 @@ describe("JSON notifications", () => {
   it.each([
     [
       "monitor.down",
-      "🔴 MonitorFlare 告警\n名称：SubsTracker\n地址：https://tracker.example/health\n状态：故障\n详情：HTTP 503\n时间：2026-09-17 15:00:00",
+      "🔴 MonitorFlare 宕机告警\n名称：SubsTracker\n地址：https://tracker.example/health\n状态：故障\n详情：HTTP 503\n时间：2026-09-17 15:00:00",
+    ],
+    [
+      "monitor.warning",
+      "🟡 MonitorFlare 预警\n名称：SubsTracker\n地址：https://tracker.example/health\n状态：即将到期\n详情：SSL 证书将在 14 天后到期\n时间：2026-09-17 15:03:00",
     ],
     [
       "monitor.up",
@@ -231,6 +235,7 @@ describe("JSON notifications", () => {
     ],
   ])("adapts a MonitorFlare %s webhook", async (event, expectedText) => {
     const isDown = event === "monitor.down";
+    const isWarning = event === "monitor.warning";
     const response = await dispatch(
       request("/v1/notify", {
         method: "POST",
@@ -239,9 +244,9 @@ describe("JSON notifications", () => {
         body: JSON.stringify({
           event,
           monitor: { name: "SubsTracker", url: "https://tracker.example/health" },
-          status: isDown ? "故障" : "正常",
-          detail: isDown ? "HTTP 503" : "HTTP 200",
-          timestamp: isDown ? "2026-09-17 15:00:00" : "2026-09-17 15:05:00",
+          status: isDown ? "故障" : isWarning ? "即将到期" : "正常",
+          detail: isDown ? "HTTP 503" : isWarning ? "SSL 证书将在 14 天后到期" : "HTTP 200",
+          timestamp: isDown ? "2026-09-17 15:00:00" : isWarning ? "2026-09-17 15:03:00" : "2026-09-17 15:05:00",
         }),
       }),
     );

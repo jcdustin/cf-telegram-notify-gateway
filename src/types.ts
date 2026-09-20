@@ -2,6 +2,7 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
   GATEWAY_SECRET: string;
+  OPS_LEDGER_SECRET?: string;
   TELEGRAM_MESSAGE_THREAD_ID?: string;
 }
 

@@ -15,10 +15,14 @@ function equalBytes(left: ArrayBuffer, right: ArrayBuffer): boolean {
   return difference === 0;
 }
 
-export async function isAuthorized(header: string | null, secret: string): Promise<boolean> {
-  if (!header || !secret) return false;
+export async function isAuthorized(header: string | null, ...secrets: Array<string | undefined>): Promise<boolean> {
+  const configuredSecrets = secrets.filter((secret): secret is string => Boolean(secret));
+  if (!header || configuredSecrets.length === 0) return false;
   const match = /^Bearer ([^\s]+)$/i.exec(header);
   if (!match?.[1]) return false;
-  const [providedHash, expectedHash] = await Promise.all([digest(match[1]), digest(secret)]);
-  return equalBytes(providedHash, expectedHash);
+  const [providedHash, ...expectedHashes] = await Promise.all([
+    digest(match[1]),
+    ...configuredSecrets.map((secret) => digest(secret)),
+  ]);
+  return expectedHashes.some((expectedHash) => equalBytes(providedHash, expectedHash));
 }

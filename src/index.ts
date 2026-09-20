@@ -16,7 +16,7 @@ function log(event: string, requestIdValue: string, status: number, source?: str
 }
 
 async function handleNotify(request: Request, env: Env, id: string): Promise<Response> {
-  if (!(await isAuthorized(request.headers.get("authorization"), env.GATEWAY_SECRET))) {
+  if (!(await isAuthorized(request.headers.get("authorization"), env.GATEWAY_SECRET, env.OPS_LEDGER_SECRET))) {
     log("notification_rejected", id, 401);
     return errorResponse(401, "unauthorized", "A valid Bearer token is required.", id);
   }

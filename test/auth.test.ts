@@ -20,4 +20,8 @@ describe("Bearer authentication", () => {
   it("rejects an incorrect token", async () => {
     await expect(isAuthorized("Bearer wrong-secret", "test-secret")).resolves.toBe(false);
   });
+
+  it("accepts an independently scoped service token", async () => {
+    await expect(isAuthorized("Bearer ops-secret", "gateway-secret", "ops-secret")).resolves.toBe(true);
+  });
 });

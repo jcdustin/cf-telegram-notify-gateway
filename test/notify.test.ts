@@ -364,3 +364,160 @@ describe("request validation and Telegram failures", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "rate_limited" });
   });
 });
+
+describe("forum topic query parameter", () => {
+  it("sends message_thread_id from thread_id for plain text", async () => {
+    const logSpy = vi.spyOn(console, "log");
+    const response = await dispatch(
+      request("/v1/notify?thread_id=12", {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "test-secret",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(sentPayload()).toMatchObject({
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text: "hello",
+      message_thread_id: 12,
+    });
+    expect(sentPayload()).not.toHaveProperty("parse_mode");
+    const logged = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(Object.keys(logged).sort()).toEqual(["event", "request_id", "status"]);
+    expect(logged).toMatchObject({ event: "notification_delivered", status: 200 });
+  });
+
+  it("sends message_thread_id from thread_id for generic JSON", async () => {
+    const response = await dispatch(
+      request("/v1/notify?thread_id=12", {
+        method: "POST",
+        contentType: "application/json",
+        body: JSON.stringify({ text: "hello", parse_mode: "HTML" }),
+        token: "test-secret",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(sentPayload()).toMatchObject({
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text: "hello",
+      parse_mode: "HTML",
+      message_thread_id: 12,
+    });
+  });
+
+  it("sends message_thread_id from thread_id for a MonitorFlare webhook", async () => {
+    const response = await dispatch(
+      request("/v1/notify?thread_id=12", {
+        method: "POST",
+        contentType: "application/json",
+        token: "test-secret",
+        body: JSON.stringify({
+          event: "monitor.down",
+          monitor: { name: "SubsTracker", url: "https://tracker.example/health" },
+          status: "故障",
+          detail: "HTTP 503",
+          timestamp: "2026-09-17 15:00:00",
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(sentPayload()).toMatchObject({
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text: "🔴 MonitorFlare 宕机告警\n名称：SubsTracker\n地址：https://tracker.example/health\n状态：故障\n详情：HTTP 503\n时间：2026-09-17 15:00:00",
+      message_thread_id: 12,
+    });
+    expect(sentPayload()).not.toHaveProperty("parse_mode");
+  });
+
+  it("overrides a configured TELEGRAM_MESSAGE_THREAD_ID", async () => {
+    const response = await dispatch(
+      request("/v1/notify?thread_id=12", {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "test-secret",
+      }),
+      { ...env, TELEGRAM_MESSAGE_THREAD_ID: "42" },
+    );
+    expect(response.status).toBe(200);
+    expect(sentPayload().message_thread_id).toBe(12);
+  });
+
+  it("uses the configured topic when thread_id is absent", async () => {
+    const response = await dispatch(
+      request("/v1/notify", {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "test-secret",
+      }),
+      { ...env, TELEGRAM_MESSAGE_THREAD_ID: "42" },
+    );
+    expect(response.status).toBe(200);
+    expect(sentPayload().message_thread_id).toBe(42);
+  });
+
+  it("omits message_thread_id when no topic is configured", async () => {
+    const response = await dispatch(
+      request("/v1/notify", {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "test-secret",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(sentPayload()).not.toHaveProperty("message_thread_id");
+  });
+
+  it.each(["abc", "0", "-1", "1.5", ""])("rejects invalid thread_id %j", async (threadId) => {
+    const logSpy = vi.spyOn(console, "log");
+    const response = await dispatch(
+      request(`/v1/notify?thread_id=${encodeURIComponent(threadId)}`, {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "test-secret",
+      }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: "invalid_thread_id",
+      message: "thread_id must be a positive integer.",
+    });
+    expect(telegramFetch).not.toHaveBeenCalled();
+    const logged = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(Object.keys(logged).sort()).toEqual(["event", "request_id", "status"]);
+    expect(logged).toMatchObject({ event: "notification_rejected", status: 400 });
+  });
+
+  it("returns 401 for a wrong token before rejecting thread_id", async () => {
+    const response = await dispatch(
+      request("/v1/notify?thread_id=abc", {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "wrong",
+      }),
+    );
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: "unauthorized" });
+    expect(telegramFetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["thread_id", "message_thread_id"])("rejects %s in the JSON body", async (field) => {
+    const response = await dispatch(
+      request("/v1/notify?thread_id=12", {
+        method: "POST",
+        contentType: "application/json",
+        body: JSON.stringify({ text: "hello", [field]: 12 }),
+        token: "test-secret",
+      }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "unsupported_field" });
+    expect(telegramFetch).not.toHaveBeenCalled();
+  });
+});

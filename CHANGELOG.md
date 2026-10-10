@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Native MonitorFlare webhook adapter for `monitor.down` and `monitor.up` events
+- Native MonitorFlare webhook adapter for `monitor.down`, `monitor.warning`, and `monitor.up` events
+- Optional `thread_id` query parameter on `POST /v1/notify` to choose a Telegram forum topic for that request
 
 ## [0.1.0] - 2026-09-17
 

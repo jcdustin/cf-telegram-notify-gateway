@@ -18,7 +18,7 @@
 - 不需要数据库、KV、D1、Durable Objects、队列、定时任务、Docker 或前端
 - 零运行时 npm 依赖
 - Bearer Token 认证，并使用恒定时间比较
-- 原生兼容 MonitorFlare 的 `monitor.down` 和 `monitor.up` Webhook
+- 原生兼容 MonitorFlare 的 `monitor.down`、`monitor.warning` 和 `monitor.up` Webhook
 - 纯文本原样转发，不自动添加格式
 - JSON 模式只接受少量安全的展示参数
 - Telegram 目标只能通过 Worker Secret 配置
@@ -36,7 +36,7 @@ flowchart LR
     C --> D[Telegram 私聊 / 群组 / 频道]
 ```
 
-Worker 只提供 `GET /health` 和 `POST /v1/notify`。它不保存状态、不接收 Telegram 更新，也不允许调用方选择 Bot 或发送目标。
+Worker 只提供 `GET /health` 和 `POST /v1/notify`。它不保存状态，也不接收 Telegram 更新。调用方不能选择 Bot 或聊天，但可以在已配置的聊天内选择话题。
 
 ## 快速开始
 
@@ -92,9 +92,10 @@ npx wrangler secret put TELEGRAM_MESSAGE_THREAD_ID
 | `TELEGRAM_BOT_TOKEN` | 是 | BotFather 签发的 Bot API Token |
 | `TELEGRAM_CHAT_ID` | 是 | 唯一的私聊、群组或频道目标 |
 | `GATEWAY_SECRET` | 是 | 与可信上游共享的长随机 Bearer Token |
-| `TELEGRAM_MESSAGE_THREAD_ID` | 否 | Telegram 论坛话题数字 ID |
+| `OPS_LEDGER_SECRET` | 否 | 可选的第二个 Bearer Token。设置后，两个密钥任一匹配即可通过认证 |
+| `TELEGRAM_MESSAGE_THREAD_ID` | 否 | 默认论坛话题 ID。请求带 `thread_id` 查询参数时会被覆盖 |
 
-不要提交 `.dev.vars`、真实 Token、真实私有 Chat ID 或生产 Secret。
+`GATEWAY_SECRET` 和可选的 `OPS_LEDGER_SECRET` 都应使用长随机值。两者任一匹配即可通过 `POST /v1/notify` 认证。不要提交 `.dev.vars`、真实 Token、真实私有 Chat ID 或生产 Secret。
 
 ## 发送通知
 
@@ -105,6 +106,16 @@ Authorization: Bearer YOUR_GATEWAY_SECRET
 ```
 
 网关只从该请求头读取密钥，不接受 URL、查询参数或正文中的密钥。可选的 `X-Notify-Source` 请求头只用于结构化日志，不会添加到 Telegram 消息中。
+
+### 论坛话题
+
+用查询参数 `thread_id` 把这一次请求发到指定的 Telegram 论坛话题：
+
+```text
+POST /v1/notify?thread_id=12
+```
+
+该值必须是正整数。网关把它作为 `message_thread_id` 发送，并在这一次请求中代替 `TELEGRAM_MESSAGE_THREAD_ID`。省略 `thread_id` 时，若设置了 `TELEGRAM_MESSAGE_THREAD_ID` 就使用该默认话题，否则不指定话题。参数存在但不是正整数（包括空的 `thread_id`）时，返回 400 `invalid_thread_id`，且不会发送到 Telegram。JSON 正文不接受 `thread_id` 或 `message_thread_id`。
 
 ### 纯文本模式
 
@@ -139,7 +150,7 @@ HTTP 500
 
 ### MonitorFlare Webhook
 
-网关可直接接收 MonitorFlare 通用 Webhook 的原生 JSON，无需修改 MonitorFlare。它会验证 `event`、`monitor`、`status`、`detail` 和 `timestamp` 字段，并将 `monitor.down` / `monitor.up` 事件转换为易读的 Telegram 纯文本通知。
+网关可直接接收 MonitorFlare 通用 Webhook 的原生 JSON，无需修改 MonitorFlare。它会验证 `event`、`monitor`、`status`、`detail` 和 `timestamp` 字段，并将 `monitor.down` / `monitor.warning` / `monitor.up` 事件转换为易读的 Telegram 纯文本通知。
 
 在 MonitorFlare 的通用 Webhook 渠道中配置：
 
@@ -193,14 +204,16 @@ curl -X POST \
 
 ## 论坛话题支持
 
-只有在向特定 Telegram 论坛话题发送消息时，才设置 `TELEGRAM_MESSAGE_THREAD_ID`。它必须是正整数。普通私聊、非论坛群组和普通频道应保持未设置状态。
+将 `TELEGRAM_MESSAGE_THREAD_ID` 设为默认的 Telegram 论坛话题。它必须是正整数。普通私聊、非论坛群组和普通频道应保持未设置状态。
+
+调用方可以用 `?thread_id=` 为单次请求选择同一已配置聊天中的其他话题。该值会覆盖默认话题，并且同样必须是正整数。调用方仍然不能选择 Bot 或聊天。
 
 ## 安全模型
 
 - `/health` 无需认证，但不会泄露任何配置。
 - `/v1/notify` 必须提供正确的 Bearer 凭据。
 - 认证使用 SHA-256 摘要和恒定时间比较。
-- Bot Token 和目标 ID 只从 Worker Secret 读取。
+- 调用方不能选择 Bot 或聊天，二者只从 Worker Secret 读取。调用方可以在已配置的聊天内选择话题。
 - JSON 字段采用白名单，不提供通用 Telegram 代理能力。
 - 日志不包含消息正文、Bot Token、网关密钥、Chat ID 或完整认证请求头。
 - Telegram 返回的原始错误描述不会暴露给调用方。
@@ -222,7 +235,7 @@ curl -X POST \
 
 | HTTP | 常见错误码 | 含义 |
 | --- | --- | --- |
-| 400 | `invalid_json`、`missing_text`、`invalid_parse_mode`、`message_too_long` | 请求内容不合法 |
+| 400 | `invalid_json`、`missing_text`、`invalid_parse_mode`、`message_too_long`、`invalid_thread_id` | 请求内容不合法 |
 | 401 | `unauthorized` | Bearer Token 缺失、格式错误或不正确 |
 | 404 | `not_found` | 路径不存在 |
 | 405 | `method_not_allowed` | 请求方法不允许 |

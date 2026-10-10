@@ -70,6 +70,49 @@ describe("Telegram delivery", () => {
     expect(payload.message_thread_id).toBe(42);
   });
 
+  it("uses an explicit thread id instead of the configured default", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      telegramResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    await sendTelegramMessage({ text: "hello" }, { ...env, TELEGRAM_MESSAGE_THREAD_ID: "42" }, fetcher, 12);
+    const init = fetcher.mock.calls[0]?.[1];
+    if (typeof init?.body !== "string") throw new Error("Expected a string request body.");
+    const payload = JSON.parse(init.body) as Record<string, unknown>;
+    expect(payload.message_thread_id).toBe(12);
+  });
+
+  it("does not validate the configured topic when an override is provided", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      telegramResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    await expect(
+      sendTelegramMessage({ text: "hello" }, { ...env, TELEGRAM_MESSAGE_THREAD_ID: "not-a-topic" }, fetcher, 12),
+    ).resolves.toEqual({ ok: true, messageId: 1 });
+    const init = fetcher.mock.calls[0]?.[1];
+    if (typeof init?.body !== "string") throw new Error("Expected a string request body.");
+    const payload = JSON.parse(init.body) as Record<string, unknown>;
+    expect(payload.message_thread_id).toBe(12);
+  });
+
+  it("rejects an invalid configured forum topic ID when no override is given", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(
+      sendTelegramMessage({ text: "hello" }, { ...env, TELEGRAM_MESSAGE_THREAD_ID: "not-a-topic" }, fetcher),
+    ).resolves.toEqual({ ok: false, status: 500, code: "configuration_error" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("treats an empty configured forum topic ID as unset", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      telegramResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    await sendTelegramMessage({ text: "hello" }, { ...env, TELEGRAM_MESSAGE_THREAD_ID: "" }, fetcher);
+    const init = fetcher.mock.calls[0]?.[1];
+    if (typeof init?.body !== "string") throw new Error("Expected a string request body.");
+    const payload = JSON.parse(init.body) as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("message_thread_id");
+  });
+
   it("does not expose a token when the network throws it", async () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error(env.TELEGRAM_BOT_TOKEN));
     const result = await sendTelegramMessage({ text: "hello" }, env, fetcher);

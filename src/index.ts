@@ -1,7 +1,7 @@
 import { isAuthorized } from "./auth";
 import { parseNotifyRequest, PayloadError } from "./payload";
 import { errorResponse, jsonResponse } from "./response";
-import { sendTelegramMessage } from "./telegram";
+import { parseThreadId, sendTelegramMessage } from "./telegram";
 import type { Env } from "./types";
 
 function requestId(request: Request): string {
@@ -21,6 +21,17 @@ async function handleNotify(request: Request, env: Env, id: string): Promise<Res
     return errorResponse(401, "unauthorized", "A valid Bearer token is required.", id);
   }
 
+  const threadIdValue = new URL(request.url).searchParams.get("thread_id");
+  let threadIdOverride: number | undefined;
+  if (threadIdValue !== null) {
+    const parsed = parseThreadId(threadIdValue);
+    if (parsed === null) {
+      log("notification_rejected", id, 400);
+      return errorResponse(400, "invalid_thread_id", "thread_id must be a positive integer.", id);
+    }
+    threadIdOverride = parsed;
+  }
+
   let message;
   try {
     message = await parseNotifyRequest(request);
@@ -33,7 +44,7 @@ async function handleNotify(request: Request, env: Env, id: string): Promise<Res
     return errorResponse(400, "invalid_payload", "The request payload is invalid.", id);
   }
 
-  const result = await sendTelegramMessage(message, env);
+  const result = await sendTelegramMessage(message, env, fetch, threadIdOverride);
   const source = request.headers.get("x-notify-source") ?? undefined;
   if (result.ok) {
     log("notification_delivered", id, 200, source);

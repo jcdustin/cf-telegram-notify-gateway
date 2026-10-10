@@ -6,8 +6,7 @@ export type DeliveryResult =
   | { ok: false; status: 502; code: "telegram_error" }
   | { ok: false; status: 500; code: "configuration_error" };
 
-function parseThreadId(value: string | undefined): number | undefined | null {
-  if (value === undefined || value === "") return undefined;
+export function parseThreadId(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
@@ -23,12 +22,23 @@ export async function sendTelegramMessage(
   message: NotifyMessage,
   env: Env,
   fetcher: typeof fetch = fetch,
+  threadIdOverride?: number,
 ): Promise<DeliveryResult> {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
     return { ok: false, status: 500, code: "configuration_error" };
   }
-  const threadId = parseThreadId(env.TELEGRAM_MESSAGE_THREAD_ID);
-  if (threadId === null) return { ok: false, status: 500, code: "configuration_error" };
+
+  let threadId: number | undefined;
+  if (threadIdOverride !== undefined) {
+    threadId = threadIdOverride;
+  } else {
+    const configured = env.TELEGRAM_MESSAGE_THREAD_ID;
+    if (configured !== undefined && configured !== "") {
+      const parsed = parseThreadId(configured);
+      if (parsed === null) return { ok: false, status: 500, code: "configuration_error" };
+      threadId = parsed;
+    }
+  }
 
   const payload: TelegramSendMessage = { chat_id: env.TELEGRAM_CHAT_ID, ...message };
   if (threadId !== undefined) payload.message_thread_id = threadId;

@@ -18,7 +18,7 @@ This project does one thing: accept an authenticated HTTP request and call Teleg
 - No database, KV, D1, Durable Objects, queues, cron, Docker, or frontend
 - Zero runtime npm dependencies
 - Bearer-token authentication with constant-time comparison
-- Native MonitorFlare `monitor.down` and `monitor.up` webhook support
+- Native MonitorFlare `monitor.down`, `monitor.warning`, and `monitor.up` webhook support
 - Plain-text pass-through with no automatic formatting
 - A small allowlist of safe JSON presentation options
 - One secret-configured Telegram destination
@@ -36,7 +36,7 @@ flowchart LR
     C --> D[Telegram Chat / Channel]
 ```
 
-The Worker exposes only `GET /health` and `POST /v1/notify`. It stores no state and never receives Telegram updates. The caller cannot choose a bot or destination.
+The Worker exposes only `GET /health` and `POST /v1/notify`. It stores no state and never receives Telegram updates. The caller cannot choose the bot or chat, but may choose a topic within the configured chat.
 
 ## Quick start
 
@@ -92,9 +92,10 @@ Keep the token private. This gateway sends messages only; it does not use a webh
 | `TELEGRAM_BOT_TOKEN` | Yes | Bot API token issued by BotFather |
 | `TELEGRAM_CHAT_ID` | Yes | Single configured chat, group, or channel destination |
 | `GATEWAY_SECRET` | Yes | Long random Bearer token shared with trusted callers |
-| `TELEGRAM_MESSAGE_THREAD_ID` | No | Numeric forum topic ID |
+| `OPS_LEDGER_SECRET` | No | Optional second Bearer token. When set, either secret authorizes a request |
+| `TELEGRAM_MESSAGE_THREAD_ID` | No | Default forum topic ID. Overridden by the `thread_id` query parameter |
 
-Use a long, randomly generated `GATEWAY_SECRET`. Never commit `.dev.vars`, tokens, real chat IDs, or production secrets.
+Use long, randomly generated values for `GATEWAY_SECRET` and, when set, `OPS_LEDGER_SECRET`. Either token authorizes `POST /v1/notify`. Never commit `.dev.vars`, tokens, real chat IDs, or production secrets.
 
 ## Sending notifications
 
@@ -105,6 +106,16 @@ Authorization: Bearer YOUR_GATEWAY_SECRET
 ```
 
 The secret is accepted only in this header—not in a URL, query parameter, or request body. An optional `X-Notify-Source` header may be included in structured logs; it is never added to the Telegram message.
+
+### Forum topic
+
+Pass `thread_id` as a query parameter to deliver that request to a Telegram forum topic:
+
+```text
+POST /v1/notify?thread_id=12
+```
+
+The value must be a positive integer. The gateway sends it as `message_thread_id` and uses it instead of `TELEGRAM_MESSAGE_THREAD_ID` for that request. When `thread_id` is absent, the gateway uses `TELEGRAM_MESSAGE_THREAD_ID` if that secret is set, and otherwise sends the message with no topic. A present value that is not a positive integer, including an empty `thread_id`, is rejected with 400 `invalid_thread_id` and is not sent to Telegram. The JSON body does not accept `thread_id` or `message_thread_id`.
 
 ### Plain-text example
 
@@ -133,7 +144,7 @@ The gateway does not format your notification by default. Whatever text the upst
 
 ### MonitorFlare webhook
 
-The gateway directly accepts MonitorFlare's native generic-webhook JSON; no MonitorFlare changes are required. It validates the `event`, `monitor`, `status`, `detail`, and `timestamp` fields and converts `monitor.down` / `monitor.up` events into readable plain-text Telegram notifications.
+The gateway directly accepts MonitorFlare's native generic-webhook JSON; no MonitorFlare changes are required. It validates the `event`, `monitor`, `status`, `detail`, and `timestamp` fields and converts `monitor.down` / `monitor.warning` / `monitor.up` events into readable plain-text Telegram notifications.
 
 Configure a generic Webhook channel in MonitorFlare with:
 
@@ -187,14 +198,16 @@ A topic ID is not required for a normal channel.
 
 ## Forum topic support
 
-Set `TELEGRAM_MESSAGE_THREAD_ID` only when delivering to a specific Telegram forum topic. It must be a positive integer. Leave it unset for private chats, groups without topics, and normal channels.
+Set `TELEGRAM_MESSAGE_THREAD_ID` to choose the default Telegram forum topic. It must be a positive integer. Leave it unset for private chats, groups without topics, and normal channels.
+
+A caller can choose another topic in the same configured chat for one request with `?thread_id=`. That value overrides the default and must also be a positive integer. The caller still cannot choose the bot or the chat.
 
 ## Security model
 
 - `/health` is public and reveals no configuration.
 - `/v1/notify` requires an exact Bearer credential.
 - Authentication compares SHA-256 digests in constant time.
-- Bot token and destination are read only from Worker secrets.
+- The caller cannot choose the bot or chat. Both are read only from Worker secrets. The caller may choose a topic within the configured chat.
 - The JSON API is an allowlist, not a generic Telegram proxy.
 - Logs contain no message body, bot token, secret, chat ID, or Authorization header.
 - Telegram error descriptions are not returned to callers.
@@ -216,7 +229,7 @@ Errors use one shape:
 
 | HTTP | Typical code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_json`, `missing_text`, `invalid_parse_mode`, `message_too_long` | Invalid caller payload |
+| 400 | `invalid_json`, `missing_text`, `invalid_parse_mode`, `message_too_long`, `invalid_thread_id` | Invalid caller payload |
 | 401 | `unauthorized` | Missing, malformed, or incorrect Bearer token |
 | 404 | `not_found` | Unknown path |
 | 405 | `method_not_allowed` | Known path with the wrong method |

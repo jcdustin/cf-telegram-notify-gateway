@@ -56,8 +56,8 @@ Request flow for `POST /v1/notify`, all orchestrated by `handleNotify` in `src/i
 These are the project's security model (README "Security model", CONTRIBUTING "Design boundaries"):
 
 - The caller can never choose the bot or chat; both come only from Worker secrets. The caller may choose a topic within the configured chat with the `thread_id` query parameter.
-- Logs are the small JSON record built by `log()` in `index.ts` (event, request ID, status, optional `X-Notify-Source`). Never log message bodies, tokens, chat IDs, thread IDs, or the Authorization header.
-- Raw Telegram error descriptions and thrown network errors are never returned to callers; they collapse to `telegram_error`. The bot token is part of the Telegram URL, so error text can contain it.
+- Logs are the small JSON record built by `log()` in `index.ts` (event, request ID, status, optional `X-Notify-Source`). Never log message bodies, tokens, chat IDs, thread IDs, the Authorization header, or thrown error text. On `notification_failed`, when Telegram's response body has `ok: false`, the record also includes `telegram_error_code` and `telegram_description` (description truncated to 200 characters) when those fields are present and safe. A description that contains the bot token is omitted. These fields are never returned to callers.
+- Raw Telegram error descriptions and thrown network errors are never returned to callers; they collapse to `telegram_error`. The bot token is part of the Telegram URL, so thrown error text can contain it and must not be logged.
 - No CORS headers; this is a server-to-server API.
 - No runtime dependencies, storage, frameworks, or automatic formatting without prior agreement.
 

@@ -347,6 +347,29 @@ describe("request validation and Telegram failures", () => {
     expect(text).not.toContain(env.TELEGRAM_BOT_TOKEN);
   });
 
+  it("does not return Telegram's error description to the caller", async () => {
+    const description = "Bad Request: message thread not found";
+    telegramFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: false, error_code: 400, description }), { status: 400 }),
+    );
+    const response = await dispatch(
+      request("/v1/notify", {
+        method: "POST",
+        contentType: "text/plain",
+        body: "hello",
+        token: "test-secret",
+      }),
+    );
+    const text = await response.text();
+    expect(response.status).toBe(502);
+    expect(JSON.parse(text)).toEqual({
+      ok: false,
+      error: "telegram_error",
+      message: "Telegram could not deliver the notification.",
+    });
+    expect(text).not.toContain(description);
+  });
+
   it("returns Telegram rate limiting and a safe Retry-After", async () => {
     telegramFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: false, parameters: { retry_after: 9 } }), { status: 429 }),

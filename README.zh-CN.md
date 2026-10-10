@@ -216,7 +216,7 @@ curl -X POST \
 - 调用方不能选择 Bot 或聊天，二者只从 Worker Secret 读取。调用方可以在已配置的聊天内选择话题。
 - JSON 字段采用白名单，不提供通用 Telegram 代理能力。
 - 日志不包含消息正文、Bot Token、网关密钥、Chat ID 或完整认证请求头。
-- Telegram 返回的原始错误描述不会暴露给调用方。
+- Telegram 拒绝投递时，其错误码和错误描述会写入日志，并且绝不会返回给调用方。
 - 默认不返回宽松 CORS 头；这是一个服务器到服务器的 API。
 
 如怀疑凭据泄露，请立即轮换网关密钥和 Bot Token。漏洞报告方式见 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)。
@@ -250,6 +250,8 @@ curl -X POST \
 ## 日志
 
 Worker 只记录简短的 JSON 事件，包括事件名称、请求 ID、HTTP 状态，以及调用方主动提供的来源名称。优先使用 Cloudflare `CF-Ray` 进行关联，否则生成 UUID。通知正文不会写入日志。
+
+Telegram 拒绝投递时，`notification_failed` 事件还会包含 Telegram 的错误码和错误描述，字段名为 `telegram_error_code` 和 `telegram_description`。描述会截断到 200 个字符。这两个值只取自 Telegram 的响应体，绝不会返回给调用方。如果描述中包含 Bot Token，则不写入日志。网络失败不会记录抛出的错误文本。
 
 ## 已知限制
 

@@ -113,9 +113,53 @@ describe("Telegram delivery", () => {
     expect(payload).not.toHaveProperty("message_thread_id");
   });
 
+  it("records Telegram's error code and description on a rejected delivery", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      telegramResponse(400, {
+        ok: false,
+        error_code: 400,
+        description: "Bad Request: message thread not found",
+      }),
+    );
+    await expect(sendTelegramMessage({ text: "hello" }, env, fetcher)).resolves.toEqual({
+      ok: false,
+      status: 502,
+      code: "telegram_error",
+      telegramErrorCode: 400,
+      telegramDescription: "Bad Request: message thread not found",
+    });
+  });
+
+  it("truncates a Telegram description to 200 characters", async () => {
+    const description = "x".repeat(250);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      telegramResponse(400, { ok: false, error_code: 400, description }),
+    );
+    await expect(sendTelegramMessage({ text: "hello" }, env, fetcher)).resolves.toEqual({
+      ok: false,
+      status: 502,
+      code: "telegram_error",
+      telegramErrorCode: 400,
+      telegramDescription: "x".repeat(200),
+    });
+  });
+
+  it("omits Telegram details when the failure body is not JSON", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("not-json", { status: 500, headers: { "content-type": "text/plain" } }),
+    );
+    await expect(sendTelegramMessage({ text: "hello" }, env, fetcher)).resolves.toEqual({
+      ok: false,
+      status: 502,
+      code: "telegram_error",
+    });
+  });
+
   it("does not expose a token when the network throws it", async () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error(env.TELEGRAM_BOT_TOKEN));
     const result = await sendTelegramMessage({ text: "hello" }, env, fetcher);
+    expect(result).toEqual({ ok: false, status: 502, code: "telegram_error" });
+    expect(result).not.toHaveProperty("telegramDescription");
     expect(JSON.stringify(result)).not.toContain(env.TELEGRAM_BOT_TOKEN);
   });
 });

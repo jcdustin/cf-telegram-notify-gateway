@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Native MonitorFlare webhook adapter for `monitor.down`, `monitor.warning`, and `monitor.up` events
 - Optional `thread_id` query parameter on `POST /v1/notify` to choose a Telegram forum topic for that request
+- `notification_failed` logs include Telegram's error code and description when a delivery is rejected; callers still receive only `telegram_error`
 
 ## [0.1.0] - 2026-09-17
 

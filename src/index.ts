@@ -9,9 +9,18 @@ function requestId(request: Request): string {
   return ray && ray.length <= 128 ? ray : crypto.randomUUID();
 }
 
-function log(event: string, requestIdValue: string, status: number, source?: string): void {
+function log(
+  event: string,
+  requestIdValue: string,
+  status: number,
+  source?: string,
+  extra?: Record<string, string | number>,
+): void {
   const record: Record<string, string | number> = { event, request_id: requestIdValue, status };
   if (source) record.source = source.slice(0, 100);
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) record[key] = value;
+  }
   console.log(JSON.stringify(record));
 }
 
@@ -58,7 +67,12 @@ async function handleNotify(request: Request, env: Env, id: string): Promise<Res
   const messageText = result.code === "configuration_error"
     ? "The gateway is not configured correctly."
     : "Telegram could not deliver the notification.";
-  log("notification_failed", id, result.status, source);
+  const extra: Record<string, string | number> = {};
+  if (result.code === "telegram_error") {
+    if (result.telegramErrorCode !== undefined) extra.telegram_error_code = result.telegramErrorCode;
+    if (result.telegramDescription !== undefined) extra.telegram_description = result.telegramDescription;
+  }
+  log("notification_failed", id, result.status, source, Object.keys(extra).length > 0 ? extra : undefined);
   return errorResponse(result.status, result.code, messageText, id);
 }
 

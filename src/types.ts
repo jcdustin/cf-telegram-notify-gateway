@@ -28,6 +28,7 @@ export interface TelegramSuccess {
 export interface TelegramFailure {
   ok: false;
   error_code?: number;
+  description?: string;
   parameters?: { retry_after?: number };
 }
 

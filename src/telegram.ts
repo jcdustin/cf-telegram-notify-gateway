@@ -3,7 +3,13 @@ import type { Env, NotifyMessage, TelegramResponse, TelegramSendMessage } from "
 export type DeliveryResult =
   | { ok: true; messageId: number }
   | { ok: false; status: 429; code: "rate_limited"; retryAfter?: number }
-  | { ok: false; status: 502; code: "telegram_error" }
+  | {
+      ok: false;
+      status: 502;
+      code: "telegram_error";
+      telegramErrorCode?: number;
+      telegramDescription?: string;
+    }
   | { ok: false; status: 500; code: "configuration_error" };
 
 export function parseThreadId(value: string): number | null {
@@ -16,6 +22,36 @@ function safeRetryAfter(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 86_400
     ? value
     : undefined;
+}
+
+const TELEGRAM_DESCRIPTION_LIMIT = 200;
+
+function safeTelegramErrorCode(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+}
+
+function safeTelegramDescription(value: unknown, botToken: string): string | undefined {
+  if (typeof value !== "string") return undefined;
+  // Logged as-is. Omit it when it contains the bot token so the secret cannot be recorded.
+  if (botToken !== "" && value.includes(botToken)) return undefined;
+  return value.length <= TELEGRAM_DESCRIPTION_LIMIT ? value : value.slice(0, TELEGRAM_DESCRIPTION_LIMIT);
+}
+
+function telegramErrorResult(body: TelegramResponse | undefined, botToken: string): DeliveryResult {
+  if (body?.ok !== false) return { ok: false, status: 502, code: "telegram_error" };
+
+  const telegramErrorCode = safeTelegramErrorCode(body.error_code);
+  const telegramDescription = safeTelegramDescription(body.description, botToken);
+  if (telegramErrorCode !== undefined && telegramDescription !== undefined) {
+    return { ok: false, status: 502, code: "telegram_error", telegramErrorCode, telegramDescription };
+  }
+  if (telegramErrorCode !== undefined) {
+    return { ok: false, status: 502, code: "telegram_error", telegramErrorCode };
+  }
+  if (telegramDescription !== undefined) {
+    return { ok: false, status: 502, code: "telegram_error", telegramDescription };
+  }
+  return { ok: false, status: 502, code: "telegram_error" };
 }
 
 export async function sendTelegramMessage(
@@ -54,6 +90,7 @@ export async function sendTelegramMessage(
       },
     );
   } catch {
+    // Thrown error text can include the request URL, which contains the bot token.
     return { ok: false, status: 502, code: "telegram_error" };
   }
 
@@ -75,5 +112,5 @@ export async function sendTelegramMessage(
       ? { ok: false, status: 429, code: "rate_limited" }
       : { ok: false, status: 429, code: "rate_limited", retryAfter };
   }
-  return { ok: false, status: 502, code: "telegram_error" };
+  return telegramErrorResult(body, env.TELEGRAM_BOT_TOKEN);
 }

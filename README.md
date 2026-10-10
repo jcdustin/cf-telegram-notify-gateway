@@ -210,7 +210,7 @@ A caller can choose another topic in the same configured chat for one request wi
 - The caller cannot choose the bot or chat. Both are read only from Worker secrets. The caller may choose a topic within the configured chat.
 - The JSON API is an allowlist, not a generic Telegram proxy.
 - Logs contain no message body, bot token, secret, chat ID, or Authorization header.
-- Telegram error descriptions are not returned to callers.
+- When Telegram rejects a delivery, its error code and description are written to the log and are never returned to callers.
 - No permissive CORS headers are emitted. This is a server-to-server API.
 
 Rotate both the gateway secret and bot token if either may have been exposed. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
@@ -244,6 +244,8 @@ Every response includes `X-Request-ID`. Telegram credentials and raw Telegram de
 ## Logging
 
 The Worker writes small JSON events containing the event name, request ID, HTTP status, and an explicitly provided source name. It prefers Cloudflare's `CF-Ray` value for correlation and otherwise creates a UUID. Notification bodies are not logged.
+
+When Telegram rejects a delivery, the `notification_failed` event also includes Telegram's error code and description as `telegram_error_code` and `telegram_description`. The description is truncated to 200 characters. These values are taken only from Telegram's response body and are never returned to callers. A description that contains the bot token is left out. Network failures do not log the thrown error text.
 
 ## Limitations
 

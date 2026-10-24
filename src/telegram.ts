@@ -1,4 +1,4 @@
-import type { Env, NotifyMessage, TelegramResponse, TelegramSendMessage } from "./types";
+import type { Env, FileMessage, NotifyMessage, TelegramResponse, TelegramSendMessage } from "./types";
 
 export type DeliveryResult =
   | { ok: true; messageId: number }
@@ -54,8 +54,8 @@ function telegramErrorResult(body: TelegramResponse | undefined, botToken: strin
   return { ok: false, status: 502, code: "telegram_error" };
 }
 
-export async function sendTelegramMessage(
-  message: NotifyMessage,
+async function sendTelegram(
+  message: NotifyMessage | FileMessage,
   env: Env,
   fetcher: typeof fetch = fetch,
   threadIdOverride?: number,
@@ -76,18 +76,29 @@ export async function sendTelegramMessage(
     }
   }
 
-  const payload: TelegramSendMessage = { chat_id: env.TELEGRAM_CHAT_ID, ...message };
-  if (threadId !== undefined) payload.message_thread_id = threadId;
+  let init: RequestInit;
+  let method: string;
+  if ("file" in message) {
+    const form = new FormData();
+    form.set("chat_id", env.TELEGRAM_CHAT_ID);
+    form.set("document", message.file, message.file.name);
+    if (message.caption !== undefined) form.set("caption", message.caption);
+    if (message.parse_mode !== undefined) form.set("parse_mode", message.parse_mode);
+    if (threadId !== undefined) form.set("message_thread_id", String(threadId));
+    method = "sendDocument";
+    init = { method: "POST", body: form };
+  } else {
+    const payload: TelegramSendMessage = { chat_id: env.TELEGRAM_CHAT_ID, ...message };
+    if (threadId !== undefined) payload.message_thread_id = threadId;
+    method = "sendMessage";
+    init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) };
+  }
 
   let response: Response;
   try {
     response = await fetcher(
-      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      },
+      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`,
+      init,
     );
   } catch {
     // Thrown error text can include the request URL, which contains the bot token.
@@ -113,4 +124,22 @@ export async function sendTelegramMessage(
       : { ok: false, status: 429, code: "rate_limited", retryAfter };
   }
   return telegramErrorResult(body, env.TELEGRAM_BOT_TOKEN);
+}
+
+export async function sendTelegramMessage(
+  message: NotifyMessage,
+  env: Env,
+  fetcher: typeof fetch = fetch,
+  threadIdOverride?: number,
+): Promise<DeliveryResult> {
+  return sendTelegram(message, env, fetcher, threadIdOverride);
+}
+
+export async function sendTelegramDocument(
+  message: FileMessage,
+  env: Env,
+  fetcher: typeof fetch = fetch,
+  threadIdOverride?: number,
+): Promise<DeliveryResult> {
+  return sendTelegram(message, env, fetcher, threadIdOverride);
 }

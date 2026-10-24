@@ -10,7 +10,7 @@ A tiny, stateless, secure notification relay that forwards HTTP notifications to
 
 Many monitoring tools and small services only need one dependable way to send a notification to one Telegram destination. Running a bot framework, database, dashboard, container, or VPS for that job creates unnecessary maintenance and attack surface.
 
-This project does one thing: accept an authenticated HTTP request and call Telegram's `sendMessage` API using a destination and bot token controlled by Worker secrets.
+This project does one thing: accept an authenticated HTTP request and call Telegram's `sendMessage` or `sendDocument` API using a destination and bot token controlled by Worker secrets.
 
 ## Features
 
@@ -20,10 +20,12 @@ This project does one thing: accept an authenticated HTTP request and call Teleg
 - Bearer-token authentication with constant-time comparison
 - Native MonitorFlare `monitor.down`, `monitor.warning`, and `monitor.up` webhook support
 - Plain-text pass-through with no automatic formatting
+- Upload PDFs, images, and other documents as original-quality files via `sendDocument`
 - A small allowlist of safe JSON presentation options
 - One secret-configured Telegram destination
 - Optional Telegram forum topic support
 - 64 KiB request limit and explicit 4,096-character message limit
+- 50 MB multipart upload limit and 1,024-character caption limit
 - Safe, consistent JSON errors and request correlation IDs
 - Cloudflare runtime tests with all Telegram requests mocked
 
@@ -36,7 +38,7 @@ flowchart LR
     C --> D[Telegram Chat / Channel]
 ```
 
-The Worker exposes only `GET /health` and `POST /v1/notify`. It stores no state and never receives Telegram updates. The caller cannot choose the bot or chat, but may choose a topic within the configured chat.
+The Worker exposes `GET /health`, `POST /v1/notify`, and `POST /v1/file`. It stores no state and never receives Telegram updates. The caller cannot choose the bot or chat, but may choose a topic within the configured chat.
 
 ## Quick start
 
@@ -95,11 +97,11 @@ Keep the token private. This gateway sends messages only; it does not use a webh
 | `OPS_LEDGER_SECRET` | No | Optional second Bearer token. When set, either secret authorizes a request |
 | `TELEGRAM_MESSAGE_THREAD_ID` | No | Default forum topic ID. Overridden by the `thread_id` query parameter |
 
-Use long, randomly generated values for `GATEWAY_SECRET` and, when set, `OPS_LEDGER_SECRET`. Either token authorizes `POST /v1/notify`. Never commit `.dev.vars`, tokens, real chat IDs, or production secrets.
+Use long, randomly generated values for `GATEWAY_SECRET` and, when set, `OPS_LEDGER_SECRET`. Either token authorizes `POST /v1/notify` and `POST /v1/file`. Never commit `.dev.vars`, tokens, real chat IDs, or production secrets.
 
 ## Sending notifications
 
-Every request to `POST /v1/notify` needs:
+Every request to `POST /v1/notify` or `POST /v1/file` needs:
 
 ```text
 Authorization: Bearer YOUR_GATEWAY_SECRET
@@ -113,6 +115,7 @@ Pass `thread_id` as a query parameter to deliver that request to a Telegram foru
 
 ```text
 POST /v1/notify?thread_id=12
+POST /v1/file?thread_id=12
 ```
 
 The value must be a positive integer. The gateway sends it as `message_thread_id` and uses it instead of `TELEGRAM_MESSAGE_THREAD_ID` for that request. When `thread_id` is absent, the gateway uses `TELEGRAM_MESSAGE_THREAD_ID` if that secret is set, and otherwise sends the message with no topic. A present value that is not a positive integer, including an empty `thread_id`, is rejected with 400 `invalid_thread_id` and is not sent to Telegram. The JSON body does not accept `thread_id` or `message_thread_id`.
@@ -185,6 +188,27 @@ Successful response:
 }
 ```
 
+### File upload
+
+Send one file to `POST /v1/file` using `multipart/form-data`. PDFs, images, and other documents are forwarded through Telegram's `sendDocument` API, preserving their filename, content type, and original bytes. Images arrive as files in original quality.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `file` | Yes | One non-empty file |
+| `caption` | No | Text of at most 1,024 Unicode characters |
+| `parse_mode` | No | `HTML` or `MarkdownV2` |
+
+Unknown fields are rejected with `unsupported_field`; `chat_id`, `bot_token`, and `token` are rejected with `destination_override`. Duplicate fields are rejected. The entire multipart body, including its overhead, must not exceed 50 MB (50 × 1,024 × 1,024 bytes). The limit is checked against `Content-Length` and while reading the body. The notification endpoint retains its 64 KiB limit.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  -F file=@report.pdf \
+  -F caption=Report \
+  https://YOUR-WORKER.workers.dev/v1/file
+```
+
+Let curl set the multipart content type and boundary. Authentication, `?thread_id=` overrides and default topic behavior, success responses, errors, and safe logging follow the notification endpoint.
+
 ## Channel setup
 
 To post to a Telegram channel:
@@ -205,7 +229,7 @@ A caller can choose another topic in the same configured chat for one request wi
 ## Security model
 
 - `/health` is public and reveals no configuration.
-- `/v1/notify` requires an exact Bearer credential.
+- `/v1/notify` and `/v1/file` require an exact Bearer credential.
 - Authentication compares SHA-256 digests in constant time.
 - The caller cannot choose the bot or chat. Both are read only from Worker secrets. The caller may choose a topic within the configured chat.
 - The JSON API is an allowlist, not a generic Telegram proxy.
@@ -229,12 +253,12 @@ Errors use one shape:
 
 | HTTP | Typical code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_json`, `missing_text`, `invalid_parse_mode`, `message_too_long`, `invalid_thread_id` | Invalid caller payload |
+| 400 | `invalid_json`, `missing_text`, `missing_file`, `invalid_parse_mode`, `message_too_long`, `caption_too_long`, `invalid_thread_id`, `invalid_payload`, `unsupported_field`, `destination_override` | Invalid caller payload |
 | 401 | `unauthorized` | Missing, malformed, or incorrect Bearer token |
 | 404 | `not_found` | Unknown path |
 | 405 | `method_not_allowed` | Known path with the wrong method |
-| 413 | `payload_too_large` | Body exceeds 64 KiB |
-| 415 | `unsupported_content_type` | Not `text/plain` or `application/json` |
+| 413 | `payload_too_large` | Body exceeds 64 KiB for notifications or 50 MB for file uploads |
+| 415 | `unsupported_content_type` | Notifications require `text/plain` or `application/json`; uploads require `multipart/form-data` |
 | 429 | `rate_limited` | Telegram rate limit; safe `Retry-After` forwarded when present |
 | 500 | `configuration_error` | Required Worker configuration is missing or invalid |
 | 502 | `telegram_error` | Telegram or the network rejected delivery |
@@ -250,9 +274,9 @@ When Telegram rejects a delivery, the `notification_failed` event also includes 
 ## Limitations
 
 - One configured Telegram destination
-- Text messages only
-- Maximum 4,096 Unicode characters; messages are never silently truncated or split
-- Maximum 64 KiB request body
+- Text messages and one file per upload
+- Maximum 4,096 Unicode characters per message or 1,024 per file caption; never silently truncated or split
+- Maximum 64 KiB notification body or 50 MB multipart upload body
 - No persistent idempotency: upstream retries can create duplicate Telegram messages
 - No automatic retry queue or gateway-side rate limiting
 - No browser CORS support by default
@@ -306,6 +330,6 @@ Possible future additions—none are part of v1:
 - Per-source HMAC signatures and source-specific secrets
 - Multiple destinations
 - Optional retry queue and rate limiting
-- Telegram media support
+- Other Telegram media methods
 
 Any addition should preserve the project's small, auditable, stateless default.

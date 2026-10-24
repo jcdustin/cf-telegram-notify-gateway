@@ -10,7 +10,7 @@
 
 许多监控工具和小型服务只需要把通知可靠地发送到一个 Telegram 目标。为此运行完整的机器人框架、数据库、管理面板、容器或 VPS，会带来不必要的维护成本和攻击面。
 
-本项目只做一件事：接收经过认证的 HTTP 请求，并使用保存在 Worker Secret 中的 Bot Token 和目标 Chat ID 调用 Telegram `sendMessage` API。
+本项目只做一件事：接收经过认证的 HTTP 请求，并使用保存在 Worker Secret 中的 Bot Token 和目标 Chat ID 调用 Telegram `sendMessage` 或 `sendDocument` API。
 
 ## 功能特点
 
@@ -20,10 +20,12 @@
 - Bearer Token 认证，并使用恒定时间比较
 - 原生兼容 MonitorFlare 的 `monitor.down`、`monitor.warning` 和 `monitor.up` Webhook
 - 纯文本原样转发，不自动添加格式
+- 通过 `sendDocument` 上传 PDF、图片和其他文档，保留原始质量
 - JSON 模式只接受少量安全的展示参数
 - Telegram 目标只能通过 Worker Secret 配置
 - 可选 Telegram 论坛话题支持
 - 64 KiB 请求上限和 4,096 字符消息上限
+- 50 MB 文件上传请求上限和 1,024 字符说明上限
 - 统一、安全的 JSON 错误响应和请求 ID
 - 所有 Telegram 网络请求在测试中均被模拟
 
@@ -36,7 +38,7 @@ flowchart LR
     C --> D[Telegram 私聊 / 群组 / 频道]
 ```
 
-Worker 只提供 `GET /health` 和 `POST /v1/notify`。它不保存状态，也不接收 Telegram 更新。调用方不能选择 Bot 或聊天，但可以在已配置的聊天内选择话题。
+Worker 提供 `GET /health`、`POST /v1/notify` 和 `POST /v1/file`。它不保存状态，也不接收 Telegram 更新。调用方不能选择 Bot 或聊天，但可以在已配置的聊天内选择话题。
 
 ## 快速开始
 
@@ -95,11 +97,11 @@ npx wrangler secret put TELEGRAM_MESSAGE_THREAD_ID
 | `OPS_LEDGER_SECRET` | 否 | 可选的第二个 Bearer Token。设置后，两个密钥任一匹配即可通过认证 |
 | `TELEGRAM_MESSAGE_THREAD_ID` | 否 | 默认论坛话题 ID。请求带 `thread_id` 查询参数时会被覆盖 |
 
-`GATEWAY_SECRET` 和可选的 `OPS_LEDGER_SECRET` 都应使用长随机值。两者任一匹配即可通过 `POST /v1/notify` 认证。不要提交 `.dev.vars`、真实 Token、真实私有 Chat ID 或生产 Secret。
+`GATEWAY_SECRET` 和可选的 `OPS_LEDGER_SECRET` 都应使用长随机值。两者任一匹配即可通过 `POST /v1/notify` 和 `POST /v1/file` 认证。不要提交 `.dev.vars`、真实 Token、真实私有 Chat ID 或生产 Secret。
 
 ## 发送通知
 
-所有 `POST /v1/notify` 请求都必须包含：
+所有 `POST /v1/notify` 和 `POST /v1/file` 请求都必须包含：
 
 ```text
 Authorization: Bearer YOUR_GATEWAY_SECRET
@@ -113,6 +115,7 @@ Authorization: Bearer YOUR_GATEWAY_SECRET
 
 ```text
 POST /v1/notify?thread_id=12
+POST /v1/file?thread_id=12
 ```
 
 该值必须是正整数。网关把它作为 `message_thread_id` 发送，并在这一次请求中代替 `TELEGRAM_MESSAGE_THREAD_ID`。省略 `thread_id` 时，若设置了 `TELEGRAM_MESSAGE_THREAD_ID` 就使用该默认话题，否则不指定话题。参数存在但不是正整数（包括空的 `thread_id`）时，返回 400 `invalid_thread_id`，且不会发送到 Telegram。JSON 正文不接受 `thread_id` 或 `message_thread_id`。
@@ -191,6 +194,27 @@ curl -X POST \
 }
 ```
 
+### 文件上传
+
+使用 `multipart/form-data` 向 `POST /v1/file` 上传一个文件。PDF、图片及其他文档会通过 Telegram `sendDocument` API 转发，保留原文件名、Content-Type 和二进制内容。图片以文件形式送达，保留原始质量。
+
+| 字段 | 是否必需 | 用途 |
+| --- | --- | --- |
+| `file` | 是 | 一个非空文件 |
+| `caption` | 否 | 最多 1,024 个 Unicode 字符的说明 |
+| `parse_mode` | 否 | `HTML` 或 `MarkdownV2` |
+
+未知字段返回 `unsupported_field`；`chat_id`、`bot_token` 和 `token` 返回 `destination_override`。重复字段也会被拒绝。整个 multipart 请求正文（包括封装开销）不得超过 50 MB（50 × 1,024 × 1,024 字节），网关会先检查 `Content-Length`，再在读取过程中累计字节数。通知接口仍使用 64 KiB 上限。
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  -F file=@report.pdf \
+  -F caption=Report \
+  https://YOUR-WORKER.workers.dev/v1/file
+```
+
+让 curl 自动设置 multipart 的 Content-Type 和 boundary。认证、`?thread_id=` 覆盖及默认话题行为、成功响应、错误处理和安全日志均与通知接口一致。
+
 ## Telegram 频道设置
 
 要向频道发送消息：
@@ -211,7 +235,7 @@ curl -X POST \
 ## 安全模型
 
 - `/health` 无需认证，但不会泄露任何配置。
-- `/v1/notify` 必须提供正确的 Bearer 凭据。
+- `/v1/notify` 和 `/v1/file` 必须提供正确的 Bearer 凭据。
 - 认证使用 SHA-256 摘要和恒定时间比较。
 - 调用方不能选择 Bot 或聊天，二者只从 Worker Secret 读取。调用方可以在已配置的聊天内选择话题。
 - JSON 字段采用白名单，不提供通用 Telegram 代理能力。
@@ -235,12 +259,12 @@ curl -X POST \
 
 | HTTP | 常见错误码 | 含义 |
 | --- | --- | --- |
-| 400 | `invalid_json`、`missing_text`、`invalid_parse_mode`、`message_too_long`、`invalid_thread_id` | 请求内容不合法 |
+| 400 | `invalid_json`、`missing_text`、`missing_file`、`invalid_parse_mode`、`message_too_long`、`caption_too_long`、`invalid_thread_id`、`invalid_payload`、`unsupported_field`、`destination_override` | 请求内容不合法 |
 | 401 | `unauthorized` | Bearer Token 缺失、格式错误或不正确 |
 | 404 | `not_found` | 路径不存在 |
 | 405 | `method_not_allowed` | 请求方法不允许 |
-| 413 | `payload_too_large` | 请求正文超过 64 KiB |
-| 415 | `unsupported_content_type` | Content-Type 不受支持 |
+| 413 | `payload_too_large` | 通知正文超过 64 KiB，或文件上传正文超过 50 MB |
+| 415 | `unsupported_content_type` | 通知需要 `text/plain` 或 `application/json`；文件上传需要 `multipart/form-data` |
 | 429 | `rate_limited` | Telegram 限流；存在安全值时会返回 `Retry-After` |
 | 500 | `configuration_error` | Worker 配置缺失或无效 |
 | 502 | `telegram_error` | Telegram 或网络投递失败 |
@@ -256,9 +280,9 @@ Telegram 拒绝投递时，`notification_failed` 事件还会包含 Telegram 的
 ## 已知限制
 
 - 只支持一个预先配置的 Telegram 目标
-- 只支持文本消息
-- 最多 4,096 个 Unicode 字符，不会自动截断或拆分
-- 请求正文最大 64 KiB
+- 支持文本消息，每次上传一个文件
+- 消息最多 4,096 个 Unicode 字符，文件说明最多 1,024 个，不会自动截断或拆分
+- 通知正文最大 64 KiB，multipart 文件上传正文最大 50 MB
 - 没有持久化幂等机制，上游重试可能产生重复消息
 - 没有自动重试队列或网关侧限流
 - 默认不支持浏览器 CORS
@@ -298,6 +322,6 @@ npm test
 - 按来源配置 HMAC 签名和独立密钥
 - 多目标支持
 - 可选重试队列和限流
-- Telegram 媒体消息
+- 其他 Telegram 媒体发送方式
 
 任何新功能都应保持项目默认无状态、小巧且易于审计。

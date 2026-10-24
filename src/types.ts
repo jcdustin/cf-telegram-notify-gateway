@@ -15,6 +15,12 @@ export interface NotifyMessage {
   protect_content?: boolean;
 }
 
+export interface FileMessage {
+  file: File;
+  caption?: string;
+  parse_mode?: ParseMode;
+}
+
 export interface TelegramSendMessage extends NotifyMessage {
   chat_id: string;
   message_thread_id?: number;

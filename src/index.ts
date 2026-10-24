@@ -1,7 +1,8 @@
 import { isAuthorized } from "./auth";
+import { parseFileRequest } from "./file";
 import { parseNotifyRequest, PayloadError } from "./payload";
 import { errorResponse, jsonResponse } from "./response";
-import { parseThreadId, sendTelegramMessage } from "./telegram";
+import { parseThreadId, sendTelegramDocument, sendTelegramMessage } from "./telegram";
 import type { Env } from "./types";
 
 function requestId(request: Request): string {
@@ -24,7 +25,7 @@ function log(
   console.log(JSON.stringify(record));
 }
 
-async function handleNotify(request: Request, env: Env, id: string): Promise<Response> {
+async function handleNotification(request: Request, env: Env, id: string): Promise<Response> {
   if (!(await isAuthorized(request.headers.get("authorization"), env.GATEWAY_SECRET, env.OPS_LEDGER_SECRET))) {
     log("notification_rejected", id, 401);
     return errorResponse(401, "unauthorized", "A valid Bearer token is required.", id);
@@ -43,7 +44,9 @@ async function handleNotify(request: Request, env: Env, id: string): Promise<Res
 
   let message;
   try {
-    message = await parseNotifyRequest(request);
+    message = new URL(request.url).pathname === "/v1/file"
+      ? await parseFileRequest(request)
+      : await parseNotifyRequest(request);
   } catch (error) {
     if (error instanceof PayloadError) {
       log("notification_rejected", id, error.status);
@@ -53,7 +56,9 @@ async function handleNotify(request: Request, env: Env, id: string): Promise<Res
     return errorResponse(400, "invalid_payload", "The request payload is invalid.", id);
   }
 
-  const result = await sendTelegramMessage(message, env, fetch, threadIdOverride);
+  const result = "file" in message
+    ? await sendTelegramDocument(message, env, fetch, threadIdOverride)
+    : await sendTelegramMessage(message, env, fetch, threadIdOverride);
   const source = request.headers.get("x-notify-source") ?? undefined;
   if (result.ok) {
     log("notification_delivered", id, 200, source);
@@ -88,13 +93,13 @@ export default {
       }
       return jsonResponse({ ok: true, service: "cf-telegram-notify-gateway" }, 200, id);
     }
-    if (pathname === "/v1/notify") {
+    if (pathname === "/v1/notify" || pathname === "/v1/file") {
       if (request.method !== "POST") {
         return errorResponse(405, "method_not_allowed", "Only POST is allowed for this endpoint.", id, {
           allow: "POST",
         });
       }
-      return handleNotify(request, env, id);
+      return handleNotification(request, env, id);
     }
     return errorResponse(404, "not_found", "Endpoint not found.", id);
   },

@@ -1,4 +1,4 @@
-import type { NotifyMessage } from "./types";
+import type { NotifyMessage, ParseMode } from "./types";
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_MESSAGE_CHARACTERS = 4096;
@@ -14,45 +14,64 @@ export class PayloadError extends Error {
   }
 }
 
-async function readLimitedBody(request: Request): Promise<string> {
+export function limitRequestBody(request: Request, maxBytes: number, limit: string): Request {
+  const tooLarge = () => new PayloadError("payload_too_large", 413, `Request body exceeds the ${limit} limit.`);
   const declaredLength = request.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (Number.isFinite(parsedLength) && parsedLength > MAX_BODY_BYTES) {
-      throw new PayloadError("payload_too_large", 413, "Request body exceeds the 64 KiB limit.");
+    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+      throw tooLarge();
     }
   }
 
-  if (!request.body) return "";
+  if (!request.body) return request;
   const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
   let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_BODY_BYTES) {
-        await reader.cancel();
-        throw new PayloadError("payload_too_large", 413, "Request body exceeds the 64 KiB limit.");
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          reader.releaseLock();
+          controller.close();
+          return;
+        }
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw tooLarge();
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        reader.releaseLock();
+        controller.error(error);
       }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+  return new Request(request.url, { method: request.method, headers: request.headers, body });
+}
 
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+async function readLimitedBody(request: Request): Promise<string> {
+  const bytes = await limitRequestBody(request, MAX_BODY_BYTES, "64 KiB").arrayBuffer();
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw new PayloadError("invalid_body", 400, "Request body must be valid UTF-8.");
   }
+}
+
+export function validateParseMode(value: unknown): ParseMode {
+  if (value !== "HTML" && value !== "MarkdownV2") {
+    throw new PayloadError("invalid_parse_mode", 400, "parse_mode must be HTML or MarkdownV2.");
+  }
+  return value;
 }
 
 function validateText(text: unknown): string {
@@ -148,10 +167,7 @@ function parseJson(raw: string): NotifyMessage {
 
   const message: NotifyMessage = { text: validateText(input.text) };
   if (input.parse_mode !== undefined) {
-    if (input.parse_mode !== "HTML" && input.parse_mode !== "MarkdownV2") {
-      throw new PayloadError("invalid_parse_mode", 400, "parse_mode must be HTML or MarkdownV2.");
-    }
-    message.parse_mode = input.parse_mode;
+    message.parse_mode = validateParseMode(input.parse_mode);
   }
   for (const field of ["disable_notification", "protect_content"] as const) {
     const fieldValue = input[field];
